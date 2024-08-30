@@ -26,8 +26,15 @@ COPY . /app
 # Set the working directory
 WORKDIR /app
 
+# Add the entrypoint script
+COPY ./entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Expose the application port
 EXPOSE 80
+
+# Set the entrypoint to run the script before starting the application
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Run the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80"]
