@@ -233,6 +233,7 @@ def delete_parent(parent_id: int, db: Session = Depends(get_db)):
     delete_message = crud.delete_parent(db=db, parent_id=parent_id)
 
     # Invalidate the list cache
+    delete_keys_by_pattern("children:*")
     delete_keys_by_pattern("parents:*")
 
     return delete_message
