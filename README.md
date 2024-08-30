@@ -21,6 +21,7 @@ This project was created as a recruitment task and demonstrates basic CRUD (Crea
 - **MySQL Integration**: Persistent storage using a MySQL database.
 - **Pydantic**: Pydantic is used for data modeling, ensuring structured and automatically validated data.
 - **Dockerized Setup**: Easy deployment and testing with Docker and Docker Compose.
+- **Redis Caching**: Integration with Redis for caching query results.
 - **API Documentation**: Automatically generated API docs using FastAPI's Swagger UI.
 - **Continuous Integration**: CI implemented using Github Actions.
 

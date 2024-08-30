@@ -1,7 +1,14 @@
+import json
+
 from fastapi.testclient import TestClient
+
+from app.routes import redis_client
 
 
 def test_create_parent(client: TestClient):
+    """
+    Test creating a new parent.
+    """
     response = client.post(
         "/parents/",
         json={
@@ -19,6 +26,9 @@ def test_create_parent(client: TestClient):
 
 
 def test_create_child(client: TestClient):
+    """
+    Test creating a new child.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -41,6 +51,9 @@ def test_create_child(client: TestClient):
 
 
 def test_read_parents(client: TestClient):
+    """
+    Test retrieving a list of parents.
+    """
     response = client.get("/parents/")
     assert response.status_code == 200
     data = response.json()
@@ -48,6 +61,9 @@ def test_read_parents(client: TestClient):
 
 
 def test_read_children(client: TestClient):
+    """
+    Test retrieving a list of children.
+    """
     response = client.get("/children/")
     assert response.status_code == 200
     data = response.json()
@@ -55,6 +71,9 @@ def test_read_children(client: TestClient):
 
 
 def test_read_specific_parent(client: TestClient):
+    """
+    Test retrieving a specific parent by ID.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -73,6 +92,9 @@ def test_read_specific_parent(client: TestClient):
 
 
 def test_read_specific_child(client: TestClient):
+    """
+    Test retrieving a specific child by ID.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -97,6 +119,9 @@ def test_read_specific_child(client: TestClient):
 
 
 def test_update_parent(client: TestClient):
+    """
+    Test updating an existing parent.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -123,6 +148,9 @@ def test_update_parent(client: TestClient):
 
 
 def test_update_child(client: TestClient):
+    """
+    Test updating an existing child.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -155,6 +183,9 @@ def test_update_child(client: TestClient):
 
 
 def test_delete_parent(client: TestClient):
+    """
+    Test deleting an existing parent.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -176,6 +207,9 @@ def test_delete_parent(client: TestClient):
 
 
 def test_delete_child(client: TestClient):
+    """
+    Test deleting an existing child.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -203,6 +237,9 @@ def test_delete_child(client: TestClient):
 
 
 def test_create_parent_invalid_data(client: TestClient):
+    """
+    Test creating a parent with invalid data.
+    """
     response = client.post(
         "/parents/",
         json={"name": "", "age": 40, "email": "not-an-email", "address": ""},
@@ -211,6 +248,9 @@ def test_create_parent_invalid_data(client: TestClient):
 
 
 def test_create_child_with_invalid_data(client: TestClient):
+    """
+    Test creating a child with invalid data.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -230,6 +270,9 @@ def test_create_child_with_invalid_data(client: TestClient):
 
 
 def test_update_nonexistent_parent(client: TestClient):
+    """
+    Test updating a nonexistent parent.
+    """
     response = client.put(
         "/parents/999999",
         json={
@@ -243,6 +286,9 @@ def test_update_nonexistent_parent(client: TestClient):
 
 
 def test_update_nonexistent_child(client: TestClient):
+    """
+    Test updating a nonexistent child.
+    """
     response = client.put(
         "/children/999999",
         json={
@@ -256,6 +302,10 @@ def test_update_nonexistent_child(client: TestClient):
 
 
 def test_delete_parent_with_children(client: TestClient):
+    """
+    Test deleting a parent with associated children. Verifies that the API returns a 200 status code
+    and that both the parent and the associated children are deleted.
+    """
     parent_response = client.post(
         "/parents/",
         json={
@@ -295,10 +345,132 @@ def test_delete_parent_with_children(client: TestClient):
 
 
 def test_delete_nonexistent_parent(client: TestClient):
+    """
+    Test deleting a nonexistent parent.
+    """
     response = client.delete("/parents/999999")
     assert response.status_code == 404
 
 
 def test_delete_nonexistent_child(client: TestClient):
+    """
+    Test deleting a nonexistent child.
+    """
     response = client.delete("/children/999999")
     assert response.status_code == 404
+
+
+def test_redis_connection(client: TestClient):
+    """
+    Test Redis connection and basic operations. Verifies that keys can be set,
+    retrieved, and deleted from Redis.
+    """
+    # Define a key-value pair
+    test_key = "test_key"
+    test_value = "test_value"
+
+    # Set the value in Redis
+    redis_client.set(test_key, test_value)
+
+    # Retrieve the value from Redis
+    value = redis_client.get(test_key)
+    assert value is not None, "Redis did not return a value"
+    assert value.decode("utf-8") == test_value, "Redis returned an incorrect value"
+
+    # Delete the key from Redis
+    redis_client.delete(test_key)
+
+    # Check if the key has been deleted
+    value = redis_client.get(test_key)
+    assert value is None, "Redis key was not deleted"
+
+
+def test_get_parents_stores_in_redis(client: TestClient):
+    """
+    Test that the list of parents is stored in Redis after a GET request.
+    Verifies that the cache is initially empty and is populated after the request.
+    """
+    # Clear Redis before the test
+    redis_client.flushdb()
+
+    # Create a parent
+    client.post(
+        "/parents/",
+        json={
+            "name": "Parent Redis Test",
+            "age": 40,
+            "email": "redis_test@example.com",
+            "address": "Testland",
+        },
+    )
+
+    # Check Redis before GET request
+    cached_parents_before = redis_client.get("parents:0:100")
+    assert (
+        cached_parents_before is None
+    ), "Redis cache should be empty before the GET request"
+
+    # Get the list of parents (this should store the result in Redis)
+    response = client.get("/parents/")
+    assert response.status_code == 200
+
+    # Check Redis after GET request
+    cached_parents_after = redis_client.get("parents:0:100")
+    assert (
+        cached_parents_after is not None
+    ), "Redis cache should store the parents list after the GET request"
+
+    # Deserialize the data from Redis and check if it matches the response
+    cached_parents = json.loads(cached_parents_after.decode("utf-8"))
+    response_data = response.json()
+    assert (
+        cached_parents == response_data
+    ), "Cached data in Redis should match the response data"
+
+    # Clean up by flushing Redis
+    redis_client.flushdb()
+
+
+def test_delete_parent_invalidates_cache(client: TestClient):
+    """
+    Test that deleting a parent invalidates the cached list of parents in Redis.
+    Verifies that the cache is cleared after a parent is deleted.
+    """
+    # Step 1: Ensure Redis is clear
+    redis_client.flushdb()
+
+    # Step 2: Create a parent to populate the cache
+    parent_response = client.post(
+        "/parents/",
+        json={
+            "name": "Parent 6",
+            "age": 45,
+            "email": "user6@example.com",
+            "address": "Italy",
+        },
+    )
+    parent_id = parent_response.json()["id"]
+    assert parent_response.status_code == 201
+
+    # Step 3: Access the parents to store them in the cache
+    response = client.get("/parents/")
+    assert response.status_code == 200
+
+    # Step 4: Verify that the cache is populated
+    cached_parents_before = redis_client.get("parents:0:100")
+    assert (
+        cached_parents_before is not None
+    ), "Redis cache should store the parents list"
+
+    # Step 5: Delete the parent, which should invalidate the cache
+    delete_response = client.delete(f"/parents/{parent_id}")
+    assert delete_response.status_code == 200
+
+    # Step 6: Check if the cache has been invalidated
+    cached_parents_after = redis_client.get("parents:0:100")
+    assert (
+        cached_parents_after is None
+    ), "Redis cache should be invalidated after deleting a parent"
+
+    # Clean up by flushing Redis
+    redis_client.flushdb()

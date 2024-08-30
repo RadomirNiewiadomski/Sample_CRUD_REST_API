@@ -1,3 +1,9 @@
+import json
+
+import redis
+
+import os
+
 from fastapi import APIRouter, Depends, status
 
 from sqlalchemy.orm import Session
@@ -7,7 +13,19 @@ from typing import List
 from . import crud, schemas
 from .database import get_db
 
+
 router = APIRouter()
+
+redis_host = os.getenv("REDIS_HOST", "localhost")
+redis_port = int(os.getenv("REDIS_PORT", 6379))
+redis_client = redis.Redis(host=redis_host, port=redis_port, db=0)
+
+
+def delete_keys_by_pattern(pattern: str):
+    """Helper function for invalidating cache."""
+    keys = redis_client.keys(pattern)
+    if keys:
+        redis_client.delete(*keys)
 
 
 @router.post(
@@ -24,8 +42,12 @@ def create_parent(parent: schemas.ParentCreate, db: Session = Depends(get_db)):
     Returns:
         schemas.Parent: The created Parent object.
     """
+    new_parent = crud.create_parent(db=db, parent=parent)
 
-    return crud.create_parent(db=db, parent=parent)
+    # Invalidate cache
+    delete_keys_by_pattern("parents:*")
+
+    return new_parent
 
 
 @router.post(
@@ -42,8 +64,13 @@ def create_child(child: schemas.ChildCreate, db: Session = Depends(get_db)):
     Returns:
         schemas.Child: The created Child object.
     """
+    new_child = crud.create_child(db=db, child=child)
 
-    return crud.create_child(db=db, child=child)
+    # Invalidate cache
+    delete_keys_by_pattern("children:*")
+    delete_keys_by_pattern("parents:*")
+
+    return new_child
 
 
 @router.get("/parents/", response_model=List[schemas.Parent])
@@ -59,8 +86,22 @@ def read_parents(skip: int = 0, limit: int = 100, db: Session = Depends(get_db))
     Returns:
         list[schemas.Parent]: A list of Parent objects with their children.
     """
+    cache_key = f"parents:{skip}:{limit}"
+    cached_parents = redis_client.get(cache_key)
 
-    return crud.get_parents(db=db, skip=skip, limit=limit)
+    if cached_parents:
+        return json.loads(cached_parents)
+
+    parents = crud.get_parents(db=db, skip=skip, limit=limit)
+    # Convert SQLAlchemy models to Pydantic schemas for serialization
+    parents_data = [
+        schemas.Parent.model_validate(parent).model_dump() for parent in parents
+    ]
+    redis_client.set(
+        cache_key, json.dumps(parents_data), ex=60 * 5
+    )  # Cache for 5 minutes
+
+    return parents
 
 
 @router.get("/children/", response_model=List[schemas.Child])
@@ -76,8 +117,22 @@ def read_children(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
     Returns:
         list[schemas.Parent]: A list of Child objects.
     """
+    cache_key = f"children:{skip}:{limit}"
+    cached_children = redis_client.get(cache_key)
 
-    return crud.get_children(db=db, skip=skip, limit=limit)
+    if cached_children:
+        return json.loads(cached_children)
+
+    children = crud.get_children(db=db, skip=skip, limit=limit)
+    # Convert SQLAlchemy models to Pydantic schemas for serialization
+    children_serialized = [
+        schemas.Child.model_validate(child).model_dump() for child in children
+    ]
+    redis_client.set(
+        cache_key, json.dumps(children_serialized), ex=60 * 5
+    )  # Cache for 5 minutes
+
+    return children
 
 
 @router.get("/parents/{parent_id}", response_model=schemas.Parent)
@@ -92,7 +147,9 @@ def read_specific_parent(parent_id: int, db: Session = Depends(get_db)):
     Returns:
         schemas.Parent: The specific Parent object with related Children.
     """
-    return crud.get_specific_parent(db=db, parent_id=parent_id)
+    specific_parent = crud.get_specific_parent(db=db, parent_id=parent_id)
+
+    return specific_parent
 
 
 @router.get("/children/{child_id}", response_model=schemas.Child)
@@ -107,7 +164,9 @@ def read_specific_child(child_id: int, db: Session = Depends(get_db)):
     Returns:
         schemas.Child: The specific Child object.
     """
-    return crud.get_specific_child(db=db, child_id=child_id)
+    specific_child = crud.get_specific_child(db=db, child_id=child_id)
+
+    return specific_child
 
 
 @router.put("/parents/{parent_id}", response_model=schemas.Parent)
@@ -125,7 +184,14 @@ def update_parent(
     Returns:
         schemas.Parent: The updated Parent object.
     """
-    return crud.update_parent(db=db, parent_id=parent_id, parent_update=parent)
+    updated_parent = crud.update_parent(
+        db=db, parent_id=parent_id, parent_update=parent
+    )
+
+    # Invalidate the cache for this specific parent
+    delete_keys_by_pattern("parents:*")
+
+    return updated_parent
 
 
 @router.put("/children/{child_id}", response_model=schemas.Child)
@@ -143,7 +209,13 @@ def update_child(
     Returns:
         schemas.Child: The updated Child object.
     """
-    return crud.update_child(db=db, child_id=child_id, child_update=child)
+    updated_child = crud.update_child(db=db, child_id=child_id, child_update=child)
+
+    # Invalidate the cache for this specific parent
+    delete_keys_by_pattern("children:*")
+    delete_keys_by_pattern("parents:*")
+
+    return updated_child
 
 
 @router.delete("/parents/{parent_id}", response_model=dict)
@@ -158,7 +230,12 @@ def delete_parent(parent_id: int, db: Session = Depends(get_db)):
     Returns:
         dict: Success message.
     """
-    return crud.delete_parent(db=db, parent_id=parent_id)
+    delete_message = crud.delete_parent(db=db, parent_id=parent_id)
+
+    # Invalidate the list cache
+    delete_keys_by_pattern("parents:*")
+
+    return delete_message
 
 
 @router.delete("/children/{child_id}", response_model=dict)
@@ -173,4 +250,10 @@ def delete_child(child_id: int, db: Session = Depends(get_db)):
     Returns:
         dict: Success message.
     """
-    return crud.delete_child(db=db, child_id=child_id)
+    delete_message = crud.delete_child(db=db, child_id=child_id)
+
+    # Invalidate the list cache
+    delete_keys_by_pattern("children:*")
+    delete_keys_by_pattern("parents:*")
+
+    return delete_message
